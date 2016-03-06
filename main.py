@@ -1,9 +1,9 @@
 import cv2
 import math
-from itertools import repeat, chain
+from itertools import chain
 from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
 import numpy as np
-import collections as cs
+
 
 def get_eyes((x, y, w, h)):
     roi_gray = gray[y:y+h, x:x+w]
@@ -15,6 +15,7 @@ def get_eyes((x, y, w, h)):
         ),
         key=lambda ((x, y, w, h)): y
     )[:2]
+
 
 def reversedim(M, k=0):
     idx = tuple(
@@ -257,13 +258,30 @@ def deal_with_it(img, t):
     scale = w * iwidthscale
     thickness = int(w * ithickscale)
     inner_thickness = int(innerthickscale * thickness)
+    text = 'DEAL WITH IT'
 
-    cv2.putText(img, 'DEAL WITH IT', (x, y), 0, scale, (255, 255, 255), thickness)
-    cv2.putText(img, 'DEAL WITH IT', (x, y), 0, scale, (0, 0, 0), inner_thickness)
+    cv2.putText(
+        img,
+        text,
+        (x, y),
+        0,
+        scale,
+        (255, 255, 255),
+        thickness
+    )
+    cv2.putText(
+        img,
+        text,
+        (x, y),
+        0,
+        scale,
+        (0, 0, 0),
+        inner_thickness
+    )
 
     return img
 
-img = cv2.imread('data/face.png')
+img = cv2.imread('data/joker-face-66.png')
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 out_img = img if img.shape[2] == 4 else cv2.merge(
@@ -278,12 +296,16 @@ out_img = img if img.shape[2] == 4 else cv2.merge(
 glasses = cv2.imread('data/glasses.png', -1)
 
 gscale = 0.25
-glasses_left_eye, glasses_right_eye = (gscale*260, gscale*40), (gscale*460, gscale*50)
+glasses_left_eye, glasses_right_eye = (
+    (gscale*260, gscale*40),
+    (gscale*460, gscale*50)
+)
 
 find_face = cv2.CascadeClassifier('data/haarcascade_frontalface_default.xml')
 find_eyes = cv2.CascadeClassifier('data/haarcascade_eye.xml')
 
-faces = find_face.detectMultiScale(gray, 1.3, 5)
+# faces = find_face.detectMultiScale(gray, 1.3, 5)
+faces = [(0, 0, img.shape[1], img.shape[0])]
 
 eyes = map(
     lambda ((a, b)): (midpoint(a), midpoint(b)),
