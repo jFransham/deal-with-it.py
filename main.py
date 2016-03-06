@@ -1,8 +1,47 @@
+#! /usr/bin/python
+
 import cv2
 import math
+import sys
 from itertools import chain
 from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
 import numpy as np
+
+
+def to_bgra(img):
+    # Already BGRA
+    if img.shape[2] == 4:
+        return img
+    # Greyscale
+    elif img.shape[2] == 1:
+        return cv2.merge(
+            (
+                img[:, :, 0],
+                img[:, :, 0],
+                img[:, :, 0],
+                np.ones(img.shape[:2], img.dtype)
+            )
+        )
+    # Greyscale w/ alpha
+    elif img.shape[2] == 2:
+        return cv2.merge(
+            (
+                img[:, :, 0],
+                img[:, :, 0],
+                img[:, :, 0],
+                img[:, :, 1]
+            )
+        )
+    # BGR
+    else:
+        return cv2.merge(
+            (
+                img[:, :, 0],
+                img[:, :, 1],
+                img[:, :, 2],
+                np.ones(img.shape[:2], img.dtype)
+            )
+        )
 
 
 def get_eyes((x, y, w, h)):
@@ -281,17 +320,12 @@ def deal_with_it(img, t):
 
     return img
 
-img = cv2.imread('data/joker-face-66.png')
+impath = sys.argv[1] if len(sys.argv) > 1 else 'data/face.png'
+
+img = cv2.imread(impath)
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-out_img = img if img.shape[2] == 4 else cv2.merge(
-    (
-        img[:, :, 0],
-        img[:, :, 1],
-        img[:, :, 2],
-        np.ones(img.shape[:2], img.dtype)
-    )
-)
+out_img = to_bgra(img)
 
 glasses = cv2.imread('data/glasses.png', -1)
 
@@ -304,8 +338,10 @@ glasses_left_eye, glasses_right_eye = (
 find_face = cv2.CascadeClassifier('data/haarcascade_frontalface_default.xml')
 find_eyes = cv2.CascadeClassifier('data/haarcascade_eye.xml')
 
-# faces = find_face.detectMultiScale(gray, 1.3, 5)
-faces = [(0, 0, img.shape[1], img.shape[0])]
+detected_faces = find_face.detectMultiScale(gray, 1.3, 5)
+faces = detected_faces if len(detected_faces) else [
+    (0, 0, img.shape[1], img.shape[0])
+]
 
 eyes = map(
     lambda ((a, b)): (midpoint(a), midpoint(b)),
