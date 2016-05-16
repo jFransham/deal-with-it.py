@@ -3,7 +3,8 @@
 import cv2
 import math
 import sys
-from itertools import chain
+from itertools import chain, izip_longest
+from getopt import getopt
 from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
 import numpy as np
 
@@ -53,7 +54,7 @@ def get_eyes((x, y, w, h)):
             eyes
         ),
         key=lambda ((x, y, w, h)): y
-    )[:2]
+    )
 
 
 def reversedim(M, k=0):
@@ -211,15 +212,20 @@ def map_frame(input_img, glasses_img, glasses_eyes, eyes):
     )
 
 
-def frame(input_img, glasses_img, (g_eye0, g_eye1), (eye0, eye1), perc):
+def render_glasses(
+    input_img,
+    glasses_img,
+    (g_eye0, g_eye1),
+    (eye0, eye1),
+    perc,
+    drop_height=None
+):
     eye0, eye1 = get_r_l(eye0, eye1)
 
     h, w, _ = input_img.shape
     x, y = t_midpoint(eye0, eye1)
     g_x, g_y = t_midpoint(g_eye0, g_eye1)
     g_h, g_w, _ = glasses_img.shape
-
-    drop_start = 0
 
     scale = get_scale((eye0, eye1), (g_eye0, g_eye1))
     glasses_rot = get_rot_difference((eye0, eye1), (g_eye0, g_eye1))
@@ -232,7 +238,9 @@ def frame(input_img, glasses_img, (g_eye0, g_eye1), (eye0, eye1), perc):
         y + offset_y * scale
     )
 
-    current_height = drop_start + perc * target_y
+    drop_start = 0 if not drop_height else target_y - drop_height
+
+    current_height = drop_start + perc * (target_y - drop_start)
 
     glasses_rot_deg = glasses_rot * (180 / math.pi)
     rotated_glasses = transform_img(
@@ -243,7 +251,33 @@ def frame(input_img, glasses_img, (g_eye0, g_eye1), (eye0, eye1), perc):
         glasses_img
     )
 
-    return alpha_composite(rotated_glasses, input_img)
+    return rotated_glasses
+
+
+def mean(l):
+    return float(sum(l)) / len(l)
+
+
+def frame(input_img, glasses_img, (g_eye0, g_eye1), eyes, perc):
+    height = mean(
+        map(
+            lambda (((_0, y0), (_1, y1))): mean([y0, y1]),
+            eyes
+        )
+    )
+
+    rotated_glasses = map(
+        lambda ((eye0, eye1)): render_glasses(
+            input_img,
+            glasses_img,
+            (g_eye0, g_eye1),
+            (eye0, eye1),
+            perc,
+            drop_height=height
+        ),
+        eyes
+    )
+    return reduce(alpha_composite, rotated_glasses, input_img)
 
 
 def scale_img(img, (w, h)):
@@ -263,8 +297,8 @@ def scale_img(img, (w, h)):
     )
 
 
-def map_deal_with_it(img):
-    return lambda (t): deal_with_it(np.copy(img), t)
+def map_deal_with_it(img, **kwargs):
+    return lambda (t): deal_with_it(np.copy(img), t, **kwargs)
 
 
 def normalize(l):
@@ -276,7 +310,7 @@ def normalize(l):
     )
 
 
-def deal_with_it(img, t):
+def deal_with_it(img, t, text='DEAL WITH IT'):
     r = (math.sin(t) + 1) / 2
     g = (math.sin(t - math.pi / 3) + 1) / 2
     b = (math.sin(t - 2 * math.pi / 3) + 1) / 2
@@ -290,14 +324,18 @@ def deal_with_it(img, t):
     )
 
     h, w, _ = img.shape
-    x, y = 30, h - 30
-    iwidthscale = 0.0038
-    ithickscale = 0.03
+
+    text_width_perc = 0.9
+    ((t_w, t_h), _1) = cv2.getTextSize(text, 0, 1, 1)
+
+    scale = (w * text_width_perc) / t_w
+
+    ithickscale = 6
     innerthickscale = 0.7
-    scale = w * iwidthscale
-    thickness = int(w * ithickscale)
+    thickness = int(scale * ithickscale)
     inner_thickness = int(innerthickscale * thickness)
-    text = 'DEAL WITH IT'
+
+    x, y = int(w - scale*t_w) / 2, h - 30
 
     cv2.putText(
         img,
@@ -320,7 +358,10 @@ def deal_with_it(img, t):
 
     return img
 
-impath = sys.argv[1] if len(sys.argv) > 1 else 'data/face.png'
+if len(sys.argv) < 2:
+    raise Exception('Must supply an image')
+
+impath = sys.argv[1]
 
 img = cv2.imread(impath)
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -338,24 +379,72 @@ glasses_left_eye, glasses_right_eye = (
 find_face = cv2.CascadeClassifier('data/haarcascade_frontalface_default.xml')
 find_eyes = cv2.CascadeClassifier('data/haarcascade_eye.xml')
 
-detected_faces = find_face.detectMultiScale(gray, 1.3, 5)
-faces = detected_faces if len(detected_faces) else [
-    (0, 0, img.shape[1], img.shape[0])
-]
+faces = find_face.detectMultiScale(gray, 1.3, 5)
 
-eyes = map(
-    lambda ((a, b)): (midpoint(a), midpoint(b)),
-    map(get_eyes, faces)
+print '{} face{} found'.format(len(faces), '' if len(faces) == 1 else 's')
+
+
+def faces_to_eyes(faces):
+    return map(
+        lambda ((a, b)): (midpoint(a), midpoint(b)),
+        filter(
+            lambda l: len(l) >= 2,
+            map(lambda f: get_eyes(f)[:2], faces)
+        )
+    )
+
+
+def chunk2(i):
+    args = [iter(i)] * 2
+    return map(
+        lambda l: (l[0], l[1]),
+        filter(
+            lambda l: len(l) >= 2,
+            izip_longest(*args)
+        )
+    )
+
+
+def all_eyes(w, h):
+    eyes = get_eyes((0, 0, w, h))
+    return map(
+        lambda ((a, b)): (midpoint(a), midpoint(b)),
+        chunk2(eyes)
+    )
+
+args, _ = getopt(sys.argv[2:], 'nw:h:o:t:')
+
+outs = filter(lambda ((a, _)): a == '-o', args)
+_, out = outs[0] if len(outs) >= 1 else (None, 'data/out.gif')
+texts = filter(lambda ((a, _)): a == '-t', args)
+_, text = texts[0] if len(texts) >= 1 else (None, None)
+
+ws = filter(lambda ((a, _)): a == '-w', args)
+hs = filter(lambda ((a, _)): a == '-w', args)
+out_size = (
+    ws[0][1] if len(ws) else 600,
+    hs[0][1] if len(hs) else 400
 )
+
+deal_args = {'text': text} if text is not None else {}
+
+find_faces = not any(
+    filter(lambda ((a, _)): a == '-n', args)
+)
+eyes = faces_to_eyes(faces) if find_faces else None
+
+if not eyes:
+    eyes = faces_to_eyes([(0, 0, img.shape[1], img.shape[0])])
+
+if not eyes:
+    raise Exception('Found no eyes')
 
 num_frames = 10
 deal_frames = 20
 deal_t_range = math.pi * 2
 
-out_size = (600, 400)
-
 frames = map(
-    map_frame(out_img, glasses, (glasses_left_eye, glasses_right_eye), eyes[0]),
+    map_frame(out_img, glasses, (glasses_left_eye, glasses_right_eye), eyes),
     map(
         lambda (x): float(x+1) / num_frames,
         range(num_frames)
@@ -373,7 +462,7 @@ rgb_frames = chain(
         )
     ),
     map(
-        map_deal_with_it(final_frame),
+        map_deal_with_it(final_frame, **deal_args),
         map(
             lambda (x): float(x * deal_t_range) / deal_frames,
             range(deal_frames)
@@ -381,4 +470,4 @@ rgb_frames = chain(
     )
 )
 
-ImageSequenceClip(list(rgb_frames), fps=10).write_gif('data/test.gif')
+ImageSequenceClip(list(rgb_frames), fps=10).write_gif(out)
