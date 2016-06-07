@@ -7,4 +7,4 @@ python2 ./main.py a-file.png -o out.gif
 
 Output:
 
-![output][./data/out.gif]
+![output](./data/out.gif)
